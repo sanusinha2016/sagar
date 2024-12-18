@@ -1,11 +1,7 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import yfinance as yf
 import time
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score
 
 st.set_page_config(page_title="S&P 500 Stock Alerts", layout="wide")
 
@@ -19,7 +15,7 @@ def load_sp500():
 sp500_stocks = load_sp500()
 
 st.title("📈 S&P 500 Stock Data Viewer with Price Alerts")
-st.markdown("Select a stock, set a price alert, and monitor its real-time data for price alerts and movement predictions!")
+st.markdown("Select a stock, set a price alert, and monitor its real-time data for price alerts!")
 
 st.markdown("""
     <style>
@@ -88,43 +84,10 @@ if "alerts" not in st.session_state:
 def fetch_stock_data(ticker, period, interval):
     return yf.download(tickers=ticker, period=period, interval=interval)
 
-def preprocess_data(data, threshold=0.002):
-    data['Daily_Return'] = data['Close'].pct_change()
-    
-    def market_movement(change):
-        if change > threshold:
-            return 1  # Up
-        elif change < -threshold:
-            return -1  # Down
-        else:
-            return 0  # Sideways
-
-    data['Movement'] = data['Daily_Return'].apply(market_movement)
-    data['MA_5'] = data['Close'].rolling(window=5).mean()
-    data['MA_10'] = data['Close'].rolling(window=10).mean()
-    data = data.dropna()
-    return data
-
-def train_model(data):
-    X = data[['Open', 'High', 'Low', 'Close', 'Volume', 'MA_5', 'MA_10']]
-    y = data['Movement']
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = RandomForestClassifier()
-    model.fit(X_train, y_train)
-    return model
-
-def predict_movement(model, latest_data):
-    prediction = model.predict(latest_data)
-    if prediction == 1:
-        return "Up"
-    elif prediction == -1:
-        return "Down"
-    else:
-        return "Sideways"
-
 if stock_name and time_range:
     ticker = sp500_stocks[stock_name]
     period = time_range[1]
+    
     interval = "1m" if time_range[0] == "1 Day" else "1d"
 
     st.write(f"Fetching data for **{stock_name} ({ticker})** for the last **{time_range[0]}**...")
@@ -135,15 +98,8 @@ if stock_name and time_range:
             st.write(f"Historical data for **{stock_name} ({ticker})** over the past {time_range[0]}:")
 
             st.dataframe(historical_data)
+
             st.line_chart(historical_data['Close'])
-
-            st.subheader("Predict Market Movement")
-            data = preprocess_data(historical_data)
-            model = train_model(data)
-            latest_data = data.iloc[-1][['Open', 'High', 'Low', 'Close', 'Volume', 'MA_5', 'MA_10']].values.reshape(1, -1)
-            prediction = predict_movement(model, latest_data)
-
-            st.markdown(f"**Prediction for tomorrow: {prediction}**")
 
             with st.expander("Set a Price Alert", expanded=True):
                 alert_price = st.number_input(
@@ -168,6 +124,27 @@ if stock_name and time_range:
                         <p class="alert-price">Price Alert: ${alert['alert_price']:.2f}</p>
                     </div>
                     """, unsafe_allow_html=True)
+
+            st.subheader("Monitoring Alerts")
+            with st.spinner("Checking stock prices every minute..."):
+                while True:
+                    for alert in st.session_state.alerts:
+                        current_data = yf.Ticker(alert["ticker"]).history(period="1d", interval="1m")
+                        if not current_data.empty:
+                            current_price = current_data["Close"].iloc[-1]
+                            st.write(f"Current price for {alert['stock_name']} ({alert['ticker']}): **${current_price:.2f}**")
+
+                            if current_price >= alert["alert_price"]:
+                                st.markdown(f"""
+                                <div class="success-message">
+                                    🚨 Alert Activated: **{alert['stock_name']} ({alert['ticker']})** reached ${current_price:.2f}!
+                                </div>
+                                """, unsafe_allow_html=True)
+                                st.session_state.alerts.remove(alert)
+                        else:
+                            st.warning("No data available. Retrying...")
+
+                    time.sleep(60)  
 
         else:
             st.warning("No data available for the selected stock.")
